@@ -7,18 +7,19 @@
 {-# LANGUAGE TemplateHaskell #-}
 module Game.LambdaPad.Core.Internal where
 
-import Control.Applicative ( Applicative, (<$>) )
+import Control.Applicative ( Applicative, (<$>), (<|>) )
 import Control.Concurrent
   ( ThreadId, forkIO, yield )
 import Control.Concurrent.MVar
   ( MVar, newMVar, isEmptyMVar, takeMVar, putMVar )
+import Control.Monad.Reader ( ReaderT, runReaderT )
 import Control.Monad.Reader.Class ( MonadReader, ask, local )
 import Control.Monad.State.Strict
-    ( State, StateT, evalStateT, execStateT, runState, runStateT )
+    ( StateT, evalStateT, execStateT, runStateT )
 import Control.Monad.State.Class ( MonadState, get, put )
 import Control.Monad.Trans ( MonadIO, liftIO )
 import Data.Int ( Int16 )
-import Data.Monoid ( Monoid, mempty, mappend, mconcat )
+import Data.Monoid ( Monoid, (<>), mempty, mappend, mconcat )
 import Data.Word ( Word8 )
 
 import Data.Algebra.Boolean ( Boolean(..) )
@@ -179,15 +180,16 @@ newtype LambdaPad user a = LambdaPad { runLambdaPad :: LambdaPadInner user a }
   deriving (Monad, MonadIO, Functor, Applicative)
 
 newtype PadState a = PadState
-    { runPadState :: State Pad a }
-  deriving (Monad, Functor, Applicative)
+    { runPadState :: StateT Pad (ReaderT SDL.Joystick IO) a }
+  deriving (Monad, MonadIO, Functor, Applicative)
 
 newtype GameWriter user a = GameWriter
     { runGameWriter :: LambdaPadInner user a }
   deriving (Monad, Functor, Applicative)
 
 data PadConfig = PadConfig
-    { padName :: String
+    { padShortName :: String
+    , padName :: String
     , buttonConfig :: Word8 -> ButtonState -> PadState (Maybe Button)
     , dpadConfig :: Word8 -> Word8 -> PadState (Maybe DPad)
     , axisConfig :: Word8 -> Int16 -> PadState (Maybe (Either Stick Trigger))
@@ -344,9 +346,16 @@ instance MonadState Pad PadState where
   get = PadState $ get
   put = PadState . put
 
+instance MonadReader SDL.Joystick PadState where
+  ask = PadState $ ask
+  local f = PadState . local f . runPadState
+
 runLambdaPadState :: PadState a -> LambdaPadInner user a
 runLambdaPadState padState = do
-    (val, newPad) <- (runState $ runPadState padState) <$> use lpPad
+    oldPad <- use lpPad
+    joystick <- use lpJoystick
+    (val, newPad) <- liftIO $
+        flip runReaderT joystick $ flip runStateT oldPad $ runPadState padState
     lpPad .= newPad
     return val
 
@@ -516,31 +525,56 @@ withLambdaPadInner act = do
     liftIO . flip putMVar lambdaPadData' =<< get
     return val
 
-startLambdaPad :: Float -> PadConfig -> GameConfig user -> IO Stop
-startLambdaPad speed padConfig
-               (GameConfig{newUserData, onStop, onEvents}) = do
+newtype PadConfigSelector = PadConfigSelector
+    { runPadConfigSelector :: SDL.JoystickDevice -> Maybe PadConfig }
+
+instance Monoid PadConfigSelector where
+  mempty = PadConfigSelector $ const Nothing
+  mappend (PadConfigSelector s1) (PadConfigSelector s2) =
+      PadConfigSelector $ \t -> s1 t <|> s2 t
+
+padConfigByDefault :: PadConfig -> PadConfigSelector
+padConfigByDefault = PadConfigSelector . const . Just
+
+startLambdaPad 
+  :: PadConfigSelector -> Int -> GameConfig user -> Float -> IO Stop
+startLambdaPad padConfigSelector joyIndex gameConfig speed = do
     SDL.initialize [SDL.InitJoystick]
-    numSticks <- SDL.numJoysticks
     joysticks <- SDL.availableJoysticks
-    aStop <- if numSticks > 0
-      then do
-        userData <- newUserData
-        joystick <- SDL.openJoystick $ V.head joysticks
-        lambdaPadData <- execStateT (runGameWriter onEvents) $ LambdaPadData
-            { _lpUserData = userData
-            , _lpJoystick = joystick
-            , _lpPadConfig = padConfig
-            , _lpEventFilter = HM.empty
-            , _lpPad = neutralPad
-            , _lpOnTick = return ()
-            , _lpSpeed = speed
-            }
-        mvarLambdaPadData <- newMVar $ lambdaPadData
-        eventLoop <- initEventLoop mvarLambdaPadData
-        tickLoop <- initTickLoop mvarLambdaPadData
-        return $ mconcat [tickLoop, eventLoop, cleanUpUser mvarLambdaPadData]
-      else return mempty
-    return $ mappend aStop $ Stop SDL.quit
+    if V.length joysticks > joyIndex
+      then let joyDevice = joysticks V.! joyIndex 
+           in case runPadConfigSelector padConfigSelector $ joyDevice of
+                Just padConfig -> fmap (<> Stop SDL.quit) $
+                    rawLambdaPad joyDevice padConfig gameConfig speed
+                Nothing -> do
+                    SDL.quit
+                    fail $ "lambda-pad: Failed to load pad config for " ++
+                        show (SDL.joystickDeviceName joyDevice)
+      else do
+          SDL.quit
+          fail $ "lambda-pad: Failed to open joystick at index " ++
+              show joyIndex
+
+rawLambdaPad 
+  :: SDL.JoystickDevice -> PadConfig -> GameConfig user -> Float
+  -> IO Stop
+rawLambdaPad joystickDevice padConfig
+             (GameConfig{newUserData, onStop, onEvents}) speed = do
+    userData <- newUserData
+    joystick <- SDL.openJoystick joystickDevice
+    lambdaPadData <- execStateT (runGameWriter onEvents) $ LambdaPadData
+        { _lpUserData = userData
+        , _lpJoystick = joystick
+        , _lpPadConfig = padConfig
+        , _lpEventFilter = HM.empty
+        , _lpPad = neutralPad
+        , _lpOnTick = return ()
+        , _lpSpeed = speed
+        }
+    mvarLambdaPadData <- newMVar $ lambdaPadData
+    eventLoop <- initEventLoop mvarLambdaPadData
+    tickLoop <- initTickLoop mvarLambdaPadData
+    return $ mconcat [tickLoop, eventLoop, cleanUpUser mvarLambdaPadData]
   where cleanUpUser mvarLambdaPadData = Stop $ do
             lambdaPadData <- takeMVar mvarLambdaPadData
             onStop $ lambdaPadData^.lpUserData

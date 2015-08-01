@@ -4,7 +4,8 @@ import Game.LambdaPad.Core.PadConfig
 
 f310 :: PadConfig
 f310 = PadConfig
-    { padName = "f310"
+    { padShortName = "f310"
+    , padName = "Logitech Gamepad F310"
     , buttonConfig = simpleButtonConfig
           [ (0, a)
           , (1, b)

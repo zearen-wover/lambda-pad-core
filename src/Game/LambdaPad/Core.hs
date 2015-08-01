@@ -1,6 +1,5 @@
 module Game.LambdaPad.Core
-  ( startLambdaPad, Stop, stop
-  , ButtonState(Pressed, Released)
+  ( ButtonState(Pressed, Released)
   , Button
   -- | A lens into whether the button is pressed.
   , buttonState

@@ -9,5 +9,5 @@ module Game.LambdaPad.Core.PadConfig
   , module Game.LambdaPad.Core
   ) where
 
-import Game.LambdaPad.Core hiding ( startLambdaPad, Stop, stop )
+import Game.LambdaPad.Core
 import Game.LambdaPad.Core.Internal
