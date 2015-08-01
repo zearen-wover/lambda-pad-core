@@ -5,13 +5,14 @@
 {-# LANGUAGE NamedFieldPuns #-}
 {-# LANGUAGE RankNTypes #-}
 {-# LANGUAGE TemplateHaskell #-}
-module Game.LambdaPad.Internal where
+module Game.LambdaPad.Core.Internal where
 
 import Control.Applicative ( Applicative, (<$>) )
 import Control.Concurrent
   ( ThreadId, forkIO, yield )
 import Control.Concurrent.MVar
   ( MVar, newMVar, isEmptyMVar, takeMVar, putMVar )
+import Control.Monad ( mapM_ )
 import Control.Monad.Reader.Class ( MonadReader, ask, local )
 import Control.Monad.State.Strict
     ( State, StateT, evalStateT, execStateT, runState, runStateT )
@@ -25,7 +26,7 @@ import Data.Algebra.Boolean ( Boolean(..) )
 import Control.Lens
     ( ALens', (.=), (%=), (%%=), (^.), cloneLens, to, use, view )
 import Prelude hiding ( (&&), (||), not )
-import Control.Lens.TH ( makeLenses )
+import Control.Lens.TH ( Getting, makeLenses )
 
 import qualified Data.HashMap.Strict as HM
 import qualified Data.Vector as V
@@ -230,15 +231,18 @@ isPad = LambdaPad . flip fmap get . runFilter
 getSpeed :: LambdaPad user Float
 getSpeed = LambdaPad $ use lpSpeed
 
--- | Since 'getSpeed' is typically so great
+-- | Since 'getSpeed' is typically large, doing an integral action every tick
+-- will result in alternating between doing nothing and doing that action e.g.
+-- 60 times per second.  This is rarely desired, so this allows one to smooth
+-- the action by tracking the residual, or fractional part in user state.
 withResidual
     :: Float -- ^ The dead zone.
     -> Float -- ^ The speed in units per second.
     -> ALens' user Float -- ^ The lens to the residual.
-    -> ALens' Pad Float -- ^ The lens to the axis.
+    -> Getting Float Pad Float -- ^ The getter to the axis displacement.
     -> LambdaPad user Int
 withResidual deadZone unitSpeed residual axis = do
-    displacement <- view $ cloneLens axis.to sqSign
+    displacement <- view $ axis.to sqSign
     tickSpeed <- LambdaPad $ use lpSpeed
     if abs displacement < deadZone
       then return 0
@@ -247,6 +251,75 @@ withResidual deadZone unitSpeed residual axis = do
   where splitIntFrac val = (intVal, val - fromIntegral intVal)
           where intVal = truncate val :: Int
         sqSign x' = signum x'*x'*x'
+
+newtype DPadButton user = DPadButton
+    (Direction, Filter user, LambdaPad user (), LambdaPad user ())
+
+dPadButton
+  :: Direction -- ^ The direction "button".
+  -> Filter user -- ^ A filter for the event.
+  -> LambdaPad user () -- ^ What to do on press.
+  -> LambdaPad user () -- ^ What to do on release.
+  -> DPadButton user
+dPadButton = DPadButton
+
+-- | This allows one to pretend that the DPad directions are like buttons.
+-- It is unwise to have a 'DPadButton' event on 'C'.
+withDPad
+  :: ALens' user (LambdaPad user ())
+  -- ^ A lens into user state for what to do when the direction is "released".
+  -> [DPadButton user] -- ^ The event handlers.
+  -> GameWriter user ()
+withDPad undoLens' dPadButtons
+    onDPadDir C true $ use undoLens >>= id >> (undoLens .= return ())
+    mapM_ addDPadButton dPadButtons
+  where undoLens = cloneLens undoLens'
+        addDPadButton (DPadButton (dir', filter', onDo, unDo)) = do
+            onDPad dir' filter' = do
+              undoLens .= unDo
+              onDo
+
+withStick
+  -> ALens' user Bool -- ^ A lens to whether the stick was displaced.
+  -> PadStick -- ^ The stick to watch.
+  -> StickFilter -- ^ The condition of the stick to watch for.
+  -> Filter user
+  -- ^ An additional, optional filter.  This only applies when determing whether
+  -- the stick was displaced.
+  -> (LambdaPad user (), LambdaPad user ()) 
+  -- ^ The action to perform when displaced and when returned to neutral resp.
+  -> GameWriter user ()
+withStick displacedLens' stick stickFilter' filter' (onDo, unDo) = do
+    onStick stick (stickFilter && not isDisplaced && filter') $ do
+      onDo
+      displacedLens .= True
+    onStick stick (not stickFilter && isDisplaced) $ do
+      unDo
+      displacedLens .= False
+  where displacedLens = cloneLens displacedLens'
+        isDisplaced = whenUser (^.displacedLens)
+        stickFilter = with stick stickFilter'
+
+withTrigger
+  -> Float -- ^ The dead zone.
+  -> ALens' user Bool -- ^ A lens to whether the trigger was displaced.
+  -> PadTrigger -- ^ The trigger to watch.
+  -> Filter user
+  -- ^ An additional, optional filter.  This only applies when determing whether
+  -- the stick was displaced.
+  -> (LambdaPad user (), LambdaPad user ()) 
+  -- ^ The action to perform when displaced and when returned to neutral resp.
+  -> GameWriter user ()
+withTrigger deadZone displacedLens' stickFilter' filter' (onDo, unDo) = do
+    onTrigger trigger (triggerFilter && not isDisplaced && filter') $ do
+      onDo
+      displacedLens .= True
+    onTrigger trigger (not triggerFilter && isDisplaced) $ do
+      unDo
+      displacedLens .= False
+  where displacedLens = cloneLens displacedLens'
+        isDisplaced = whenUser (^.displacedLens)
+        triggerFilter = with trigger $ Pull (>deadZone)
 
 neutralPad :: Pad
 neutralPad = Pad
@@ -446,25 +519,9 @@ withLambdaPadInner act = do
     liftIO . flip putMVar lambdaPadData' =<< get
     return val
 
-data LambdaPadConfig = LambdaPadConfig
-    { padConfigs :: [PadConfig]
-    , GameConfigs :: [GameConfig]
-    , speedConfig :: Float
-    }
-
--- | Runs LambdaPad with the given configuration.  This starts it in a
--- background thread, but provides the user with a 'Stop' that can be used to
--- stop. 
---
--- Note that this calls SDL.initialize and SDL.quit.  This library is not
--- intended to be used within other SDL applications.
-
-successLambdapad :: LambdaPadConfig -> IO Stop
-successLambdapad (LambdaPadConfig{..}) = do
-
-startLambdapad :: Float -> PadConfig -> GameConfig user -> IO Stop
-startLambdapad speed padConfig
-                   (GameConfig{newUserData, onStop, onEvents}) = do
+startLambdaPad :: Float -> PadConfig -> GameConfig user -> IO Stop
+startLambdaPad speed padConfig
+               (GameConfig{newUserData, onStop, onEvents}) = do
     SDL.initialize [SDL.InitJoystick]
     numSticks <- SDL.numJoysticks
     joysticks <- SDL.availableJoysticks

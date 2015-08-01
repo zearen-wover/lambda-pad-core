@@ -1,4 +1,4 @@
-module Game.LambdaPad.PadConfig
+module Game.LambdaPad.Core.PadConfig
   ( PadConfig(..), PadState
   , simpleButtonConfig
   , simpleDPadConfig
@@ -9,5 +9,5 @@ module Game.LambdaPad.PadConfig
   , module Game.LambdaPad
   ) where
 
-import Game.LambdaPad hiding ( lambdaPad, Stop, stop )
-import Game.LambdaPad.Internal
+import Game.LambdaPad.Core hiding ( startLambdaPad, Stop, stop )
+import Game.LambdaPad.Core.Internal
