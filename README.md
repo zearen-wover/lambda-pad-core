@@ -9,15 +9,18 @@ provides `Game.LambdaPad.GameConfig`, `Game.LambdaPad.PadConfig` and
 `Game.LambdaPad.Pads`, but with `Core` prepended to the innermost module name.
 E.g. `Game.LambdaPad.Core.Pads`.
 
-# Building
+# Building and Installing
 
-If for some strange reason you want to build this:
+If for some strange reason you want to build this manually:
 
-    git clone http://github.com/zearen-wover/lambda-pad-core.git
     git clone http://github.com/haskell-game/sdl2.git
-    cd lambda-pad
-    cabal sandbox init
-    cabal sandbox add-source ../sdl2
-    cabal install --dependencies-only
+    cd sdl2
     cabal configure
     cabal build
+    cabal install
+    cd ..
+    git clone http://github.com/zearen-wover/lambda-pad-core.git
+    cd lambda-pad
+    cabal configure
+    cabal build
+    cabal install
