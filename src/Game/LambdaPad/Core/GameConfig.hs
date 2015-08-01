@@ -22,7 +22,7 @@ module Game.LambdaPad.Core.GameConfig
   , onTrigger
   , onStick
   , onTick
-  , module Game.LambdaPad
+  , module Game.LambdaPad.Core
   ) where
 
 import Game.LambdaPad.Core hiding ( lambdaPad, Stop, stop )

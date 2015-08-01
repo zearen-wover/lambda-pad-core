@@ -6,7 +6,7 @@ module Game.LambdaPad.Core.PadConfig
   , triggerConfig
   , horizStickConfig
   , vertStickConfig
-  , module Game.LambdaPad
+  , module Game.LambdaPad.Core
   ) where
 
 import Game.LambdaPad.Core hiding ( startLambdaPad, Stop, stop )

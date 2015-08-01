@@ -12,7 +12,6 @@ import Control.Concurrent
   ( ThreadId, forkIO, yield )
 import Control.Concurrent.MVar
   ( MVar, newMVar, isEmptyMVar, takeMVar, putMVar )
-import Control.Monad ( mapM_ )
 import Control.Monad.Reader.Class ( MonadReader, ask, local )
 import Control.Monad.State.Strict
     ( State, StateT, evalStateT, execStateT, runState, runStateT )
@@ -24,9 +23,9 @@ import Data.Word ( Word8 )
 
 import Data.Algebra.Boolean ( Boolean(..) )
 import Control.Lens
-    ( ALens', (.=), (%=), (%%=), (^.), cloneLens, to, use, view )
+    ( Getting, ALens', (.=), (%=), (%%=), (^.), cloneLens, to, use, view )
 import Prelude hiding ( (&&), (||), not )
-import Control.Lens.TH ( Getting, makeLenses )
+import Control.Lens.TH ( makeLenses )
 
 import qualified Data.HashMap.Strict as HM
 import qualified Data.Vector as V
@@ -261,7 +260,7 @@ dPadButton
   -> LambdaPad user () -- ^ What to do on press.
   -> LambdaPad user () -- ^ What to do on release.
   -> DPadButton user
-dPadButton = DPadButton
+dPadButton dir' filter' onDo unDo = DPadButton (dir', filter', onDo, unDo)
 
 -- | This allows one to pretend that the DPad directions are like buttons.
 -- It is unwise to have a 'DPadButton' event on 'C'.
@@ -270,17 +269,17 @@ withDPad
   -- ^ A lens into user state for what to do when the direction is "released".
   -> [DPadButton user] -- ^ The event handlers.
   -> GameWriter user ()
-withDPad undoLens' dPadButtons
-    onDPadDir C true $ use undoLens >>= id >> (undoLens .= return ())
+withDPad undoLens dPadButtons = do
+    onDPadDir C true $ use (cloneLens undoLens) >>= id >>
+        (cloneLens undoLens .= return ())
     mapM_ addDPadButton dPadButtons
-  where undoLens = cloneLens undoLens'
-        addDPadButton (DPadButton (dir', filter', onDo, unDo)) = do
-            onDPad dir' filter' = do
-              undoLens .= unDo
+  where addDPadButton (DPadButton (dir', filter', onDo, unDo)) = do
+            onDPadDir dir' filter' $ do
+              cloneLens undoLens .= unDo
               onDo
 
 withStick
-  -> ALens' user Bool -- ^ A lens to whether the stick was displaced.
+  :: ALens' user Bool -- ^ A lens to whether the stick was displaced.
   -> PadStick -- ^ The stick to watch.
   -> StickFilter -- ^ The condition of the stick to watch for.
   -> Filter user
@@ -289,19 +288,18 @@ withStick
   -> (LambdaPad user (), LambdaPad user ()) 
   -- ^ The action to perform when displaced and when returned to neutral resp.
   -> GameWriter user ()
-withStick displacedLens' stick stickFilter' filter' (onDo, unDo) = do
+withStick displacedLens stick stickFilter' filter' (onDo, unDo) = do
     onStick stick (stickFilter && not isDisplaced && filter') $ do
       onDo
-      displacedLens .= True
+      cloneLens displacedLens .= True
     onStick stick (not stickFilter && isDisplaced) $ do
       unDo
-      displacedLens .= False
-  where displacedLens = cloneLens displacedLens'
-        isDisplaced = whenUser (^.displacedLens)
+      cloneLens displacedLens .= False
+  where isDisplaced = whenUser (^.cloneLens displacedLens)
         stickFilter = with stick stickFilter'
 
 withTrigger
-  -> Float -- ^ The dead zone.
+  :: Float -- ^ The dead zone.
   -> ALens' user Bool -- ^ A lens to whether the trigger was displaced.
   -> PadTrigger -- ^ The trigger to watch.
   -> Filter user
@@ -310,15 +308,14 @@ withTrigger
   -> (LambdaPad user (), LambdaPad user ()) 
   -- ^ The action to perform when displaced and when returned to neutral resp.
   -> GameWriter user ()
-withTrigger deadZone displacedLens' stickFilter' filter' (onDo, unDo) = do
+withTrigger deadZone displacedLens trigger filter' (onDo, unDo) = do
     onTrigger trigger (triggerFilter && not isDisplaced && filter') $ do
       onDo
-      displacedLens .= True
+      cloneLens displacedLens .= True
     onTrigger trigger (not triggerFilter && isDisplaced) $ do
       unDo
-      displacedLens .= False
-  where displacedLens = cloneLens displacedLens'
-        isDisplaced = whenUser (^.displacedLens)
+      cloneLens displacedLens .= False
+  where isDisplaced = whenUser (^.cloneLens displacedLens)
         triggerFilter = with trigger $ Pull (>deadZone)
 
 neutralPad :: Pad

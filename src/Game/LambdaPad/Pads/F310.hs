@@ -1,6 +1,6 @@
 module Game.LambdaPad.Pads.F310 ( f310 ) where
 
-import Game.LambdaPad.PadConfig
+import Game.LambdaPad.Core.PadConfig
 
 f310 :: PadConfig
 f310 = PadConfig
