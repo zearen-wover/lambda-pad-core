@@ -225,6 +225,24 @@ instance MonadReader Pad (LambdaPad user) where
   local f m = LambdaPad $ get >>=
       (liftIO . evalStateT (lpPad %= f >> runLambdaPad m))
 
+-- | This and its associaced lenses are a convenience contained for the pressed
+-- state of stick directions.  See 'withStick'.  This way the user can have a
+-- single entry in their @user@ state for all of the stick directions. 
+data StickPressed = StickPressed
+    { _nPress :: Bool
+    , _nePress :: Bool
+    , _ePress :: Bool
+    , _sePress :: Bool
+    , _sPress :: Bool
+    , _swPress :: Bool
+    , _wPress :: Bool
+    , _nwPress :: Bool
+    }
+makeLenses ''StickPressed
+
+emptyStickPressed :: StickPressed
+emptyStickPressed = StickPressed False False False False False False False False
+
 -- | This returns whether the provided 'Filter' matches the current game
 -- state.  Note this works with any 'Filter', so you can use it with 'whenUser'
 -- 'Filter's, too.

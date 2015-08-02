@@ -6,6 +6,8 @@ module Game.LambdaPad.Core.GameConfig
   , withResidual
   , DPadButton, dPadButton
   , withDPad
+  , StickPressed, emptyStickPressed
+  , nPress, nePress, ePress, sePress, sPress, swPress, wPress, nwPress
   , withStick
   , withTrigger
   , Filter
