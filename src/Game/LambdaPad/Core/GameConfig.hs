@@ -14,6 +14,7 @@ module Game.LambdaPad.Core.GameConfig
   , WithFilter(with)
   , Pull(..)
   , StickFilter(..)
+  , onEvent
   , onButton
   , onButtonPress
   , onButtonRelease

@@ -8,10 +8,10 @@
 module Game.LambdaPad.Core.Internal where
 
 import Control.Applicative ( Applicative, (<$>), (<|>) )
-import Control.Concurrent
-  ( ThreadId, forkIO, yield )
+import Control.Concurrent ( ThreadId, forkIO, yield )
 import Control.Concurrent.MVar
   ( MVar, newMVar, isEmptyMVar, takeMVar, putMVar )
+import Control.Monad ( when )
 import Control.Monad.Reader ( ReaderT, runReaderT )
 import Control.Monad.Reader.Class ( MonadReader, ask, local )
 import Control.Monad.State.Strict
@@ -212,6 +212,7 @@ data LambdaPadData user = LambdaPadData
     , _lpSpeed :: Float -- ^ In seconds.
     , _lpPadConfig :: !PadConfig
     , _lpEventFilter :: HM.HashMap Int [(Filter user, LambdaPad user ())]
+    , _lpOnEvent :: [(Filter user, LambdaPad user ())]
     }
 makeLenses ''LambdaPadData
 
@@ -480,6 +481,9 @@ instance WithFilter Stick Direction where
       tiltAt at =
           with stick (Push (>=0.25)) && with stick (Tilt (at, 1/8))
 
+onEvent :: Filter user -> LambdaPad user () -> GameWriter user ()
+onEvent filter' act = GameWriter $ lpOnEvent %= ((filter', act) :)
+
 onHash :: (a -> Int) -> ALens' Pad a -> Filter user -> LambdaPad user ()
        -> GameWriter user ()
 onHash aHash aLens filter' act = GameWriter $ do
@@ -579,6 +583,7 @@ rawLambdaPad joystickDevice padConfig
         , _lpJoystick = joystick
         , _lpPadConfig = padConfig
         , _lpEventFilter = HM.empty
+        , _lpOnEvent = []
         , _lpPad = neutralPad
         , _lpOnTick = return ()
         , _lpSpeed = speed
@@ -668,6 +673,9 @@ listenEvent = SDL.waitEventTimeout 1000 >>=
           _ -> return Nothing
         eventFilter <- use lpEventFilter
         whenJust (mbHash >>= flip HM.lookup eventFilter) evaluateFilter
+        (use lpOnEvent >>=) $ mapM_ $ \(filter', act) -> do
+            doAct <- fmap (runFilter filter') get
+            when doAct $ runLambdaPad act
 
 evaluateFilter :: [(Filter user, LambdaPad user ())] -> LambdaPadInner user ()
 evaluateFilter [] = return ()
