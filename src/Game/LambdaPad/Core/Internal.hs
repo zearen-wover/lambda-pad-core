@@ -198,7 +198,8 @@ data PadConfig = PadConfig
     }
 
 data GameConfig user = GameConfig
-    { gameName :: String
+    { gameShortName :: String
+    , gameName :: String
     , newUserData :: IO user
     , onStop :: user -> IO ()
     , onEvents :: GameWriter user ()
