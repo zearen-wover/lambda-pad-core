@@ -19,6 +19,7 @@ import Control.Monad.State.Strict
 import Control.Monad.State.Class ( MonadState, get, put )
 import Control.Monad.Trans ( MonadIO, liftIO )
 import Data.Int ( Int16 )
+import Data.Maybe ( listToMaybe )
 import Data.Monoid ( Monoid, (<>), mempty, mappend, mconcat )
 import Data.Word ( Word8 )
 
@@ -29,6 +30,7 @@ import Prelude hiding ( (&&), (||), not )
 import Control.Lens.TH ( makeLenses )
 
 import qualified Data.HashMap.Strict as HM
+import qualified Data.Text as T
 import qualified Data.Vector as V
 import qualified SDL
 
@@ -533,6 +535,16 @@ instance Monoid PadConfigSelector where
   mappend (PadConfigSelector s1) (PadConfigSelector s2) =
       PadConfigSelector $ \t -> s1 t <|> s2 t
 
+padConfigByName :: [PadConfig] -> PadConfigSelector
+padConfigByName padConfigs = PadConfigSelector $ \joystick -> listToMaybe $
+    filter (padHasJoystickName joystick) padConfigs
+  where padHasJoystickName joystick pad =
+            (padName pad ==) $ T.unpack $ SDL.joystickDeviceName joystick
+    
+padConfigByShortName :: [PadConfig] -> String -> PadConfigSelector
+padConfigByShortName padConfigs name = PadConfigSelector $ const $
+    listToMaybe $ filter ((name==) . padShortName) padConfigs
+
 padConfigByDefault :: PadConfig -> PadConfigSelector
 padConfigByDefault = PadConfigSelector . const . Just
 
@@ -613,33 +625,46 @@ listenEvent = SDL.waitEventTimeout 1000 >>=
   where
     listen' :: SDL.Event -> LambdaPadInner user ()
     listen' SDL.Event{SDL.eventPayload} = do
+        joyID <- SDL.getJoystickID =<< use lpJoystick
         mbHash <- case eventPayload of
           SDL.JoyButtonEvent (SDL.JoyButtonEventData
-            {SDL.joyButtonEventButton, SDL.joyButtonEventState}) -> do
-              on <- buttonConfig <$> use lpPadConfig
-              mbBut <- case joyButtonEventState of
-                0 -> runLambdaPadState $ on joyButtonEventButton Released
-                1 -> runLambdaPadState $ on joyButtonEventButton Pressed
-                _ -> do
-                  liftIO $ putStrLn $ -- TODO: actual logging
-                      "Unrecognized button state: " ++
-                      show joyButtonEventState
-                  return Nothing
-              return $ buttonHash <$> mbBut
+            { SDL.joyButtonEventButton, SDL.joyButtonEventState
+            , SDL.joyButtonEventWhich
+            }) -> if joyButtonEventWhich == joyID
+              then do
+                on <- buttonConfig <$> use lpPadConfig
+                mbBut <- case joyButtonEventState of
+                  0 -> runLambdaPadState $ on joyButtonEventButton Released
+                  1 -> runLambdaPadState $ on joyButtonEventButton Pressed
+                  _ -> do
+                    liftIO $ putStrLn $ -- TODO: actual logging
+                        "Unrecognized button state: " ++
+                        show joyButtonEventState
+                    return Nothing
+                return $ buttonHash <$> mbBut
+              else return Nothing
           SDL.JoyHatEvent (SDL.JoyHatEventData
-            {SDL.joyHatEventHat, SDL.joyHatEventValue}) -> do
-              on <- dpadConfig <$> use lpPadConfig
-              (fmap.fmap) dpadHash $ runLambdaPadState $
-                  on joyHatEventHat joyHatEventValue
+            { SDL.joyHatEventHat, SDL.joyHatEventValue
+            , SDL.joyHatEventWhich
+            }) ->  if joyHatEventWhich == joyID
+              then do
+                on <- dpadConfig <$> use lpPadConfig
+                (fmap.fmap) dpadHash $ runLambdaPadState $
+                    on joyHatEventHat joyHatEventValue
+              else return Nothing
           SDL.JoyAxisEvent (SDL.JoyAxisEventData
-            {SDL.joyAxisEventAxis, SDL.joyAxisEventValue}) -> do
-              on <- axisConfig <$> use lpPadConfig
-              mbEiStickTrig <- runLambdaPadState $
-                  on joyAxisEventAxis joyAxisEventValue
-              return $ flip fmap mbEiStickTrig $ \eiStickTrig -> do
-                  case eiStickTrig of
-                    Left stick -> stickHash stick
-                    Right trig -> triggerHash trig
+            { SDL.joyAxisEventAxis, SDL.joyAxisEventValue
+            , SDL.joyAxisEventWhich
+            }) -> if joyAxisEventWhich == joyID
+              then do
+                on <- axisConfig <$> use lpPadConfig
+                mbEiStickTrig <- runLambdaPadState $
+                    on joyAxisEventAxis joyAxisEventValue
+                return $ flip fmap mbEiStickTrig $ \eiStickTrig -> do
+                    case eiStickTrig of
+                      Left stick -> stickHash stick
+                      Right trig -> triggerHash trig
+              else return Nothing
           _ -> return Nothing
         eventFilter <- use lpEventFilter
         whenJust (mbHash >>= flip HM.lookup eventFilter) evaluateFilter
