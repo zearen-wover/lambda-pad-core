@@ -252,6 +252,17 @@ isPad = LambdaPad . flip fmap get . runFilter
 getSpeed :: LambdaPad user Float
 getSpeed = LambdaPad $ use lpSpeed
 
+--|  Rescales a value so that it's 0.0 in [-deadZone, deadzone], scales
+-- linearly to (0.0, 1.0] on (deadZone, 1.0) and to [-1.0, 0.0) on
+-- [-1.0, -deadZone).
+scaleDeadZone
+  :: Float -- ^ The dead zone.
+  -> Float -> Float
+scaleDeadZone deadZone x = numer / (1.0 - deadZone)
+where numer | x > deadZone = (x - deadZone)
+            | x < deadZone = (x + deadZone)
+            | otherwise = 0.0
+
 -- | Since 'getSpeed' is typically large, doing an integral action every tick
 -- will result in alternating between doing nothing and doing that action e.g.
 -- 60 times per second.  This is rarely desired, so this allows one to smooth
@@ -263,12 +274,10 @@ withResidual
     -> Getting Float Pad Float -- ^ The getter to the axis displacement.
     -> LambdaPad user Int
 withResidual deadZone unitSpeed residual axis = do
-    displacement <- view $ axis.to sqSign
+    displacement <- view $ axis.to (scaleDeadZone deadZone) .to sqSign
     tickSpeed <- LambdaPad $ use lpSpeed
-    if abs displacement < deadZone
-      then return 0
-      else cloneLens residual %%=
-          (splitIntFrac.(+displacement * unitSpeed / tickSpeed))
+    cloneLens residual %%=
+        (splitIntFrac.(+displacement * unitSpeed / tickSpeed))
   where splitIntFrac val = (intVal, val - fromIntegral intVal)
           where intVal = truncate val :: Int
         sqSign x' = signum x'*x'*x'
