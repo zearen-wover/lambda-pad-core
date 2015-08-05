@@ -1,5 +1,6 @@
 {-# LANGUAGE BangPatterns #-}
 {-# LANGUAGE GeneralizedNewtypeDeriving #-}
+{-# LANGUAGE FlexibleContexts #-}
 {-# LANGUAGE FlexibleInstances #-}
 {-# LANGUAGE MultiParamTypeClasses #-}
 {-# LANGUAGE NamedFieldPuns #-}
@@ -252,16 +253,16 @@ isPad = LambdaPad . flip fmap get . runFilter
 getSpeed :: LambdaPad user Float
 getSpeed = LambdaPad $ use lpSpeed
 
---|  Rescales a value so that it's 0.0 in [-deadZone, deadzone], scales
+-- | Rescales a value so that it's 0.0 in [-deadZone, deadzone], scales
 -- linearly to (0.0, 1.0] on (deadZone, 1.0) and to [-1.0, 0.0) on
 -- [-1.0, -deadZone).
 scaleDeadZone
   :: Float -- ^ The dead zone.
   -> Float -> Float
 scaleDeadZone deadZone x = numer / (1.0 - deadZone)
-where numer | x > deadZone = (x - deadZone)
-            | x < deadZone = (x + deadZone)
-            | otherwise = 0.0
+  where numer | x > deadZone = (x - deadZone)
+              | x < negate deadZone = (x + deadZone)
+              | otherwise = 0.0
 
 -- | Since 'getSpeed' is typically large, doing an integral action every tick
 -- will result in alternating between doing nothing and doing that action e.g.
@@ -310,9 +311,10 @@ withDPad undoLens dPadButtons = do
               onDo
 
 withStick
-  :: ALens' user Bool -- ^ A lens to whether the stick was displaced.
+  :: WithFilter Stick stickFilter
+  => ALens' user Bool -- ^ A lens to whether the stick was displaced.
   -> PadStick -- ^ The stick to watch.
-  -> StickFilter -- ^ The condition of the stick to watch for.
+  -> stickFilter -- ^ The stick condition to watch for.
   -> Filter user
   -- ^ An additional, optional filter.  This only applies when determing whether
   -- the stick was displaced.
@@ -330,16 +332,16 @@ withStick displacedLens stick stickFilter' filter' (onDo, unDo) = do
         stickFilter = with stick stickFilter'
 
 withTrigger
-  :: Float -- ^ The dead zone.
-  -> ALens' user Bool -- ^ A lens to whether the trigger was displaced.
+  :: WithFilter Trigger triggerFilter
+  => ALens' user Bool -- ^ A lens to whether the trigger was displaced.
   -> PadTrigger -- ^ The trigger to watch.
-  -> Filter user
-  -- ^ An additional, optional filter.  This only applies when determing whether
-  -- the stick was displaced.
+  -> triggerFilter -- ^ The trigger condition to watch for.
+  -> Filter user -- ^ An additional, optional filter.  This only applies when
+                 -- determing whether the stick was displaced.
   -> (LambdaPad user (), LambdaPad user ()) 
   -- ^ The action to perform when displaced and when returned to neutral resp.
   -> GameWriter user ()
-withTrigger deadZone displacedLens trigger filter' (onDo, unDo) = do
+withTrigger displacedLens trigger triggerFilter' filter' (onDo, unDo) = do
     onTrigger trigger (triggerFilter && not isDisplaced && filter') $ do
       onDo
       cloneLens displacedLens .= True
@@ -347,7 +349,7 @@ withTrigger deadZone displacedLens trigger filter' (onDo, unDo) = do
       unDo
       cloneLens displacedLens .= False
   where isDisplaced = whenUser (^.cloneLens displacedLens)
-        triggerFilter = with trigger $ Pull (>deadZone)
+        triggerFilter = with trigger triggerFilter'
 
 neutralPad :: Pad
 neutralPad = Pad
