@@ -26,6 +26,7 @@ library
     Game.LambdaPad.Core.PadConfig
     Game.LambdaPad.Core.Pads
     Game.LambdaPad.Pads.F310
+    Game.LambdaPad.Pads.XBox
   other-modules:
     Game.LambdaPad.Core.Internal
   build-depends:

@@ -5,6 +5,7 @@ module Game.LambdaPad.Core.Pads
 
 import Game.LambdaPad.Core.PadConfig ( PadConfig )
 import Game.LambdaPad.Pads.F310 ( f310 )
+import Game.LambdaPad.Pads.XBox ( xbox )
 
 allKnownPads :: [ PadConfig ]
-allKnownPads = [ f310 ]
+allKnownPads = [ f310, xbox ]
